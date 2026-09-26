@@ -1,0 +1,209 @@
+/**
+ *  (Versão Atualizada)
+ *
+ */
+(async function() {
+    'use strict';
+
+
+    const CONFIG = {
+        targetElementId: 'universe-drawers-courseindex',
+        attributeName: 'data-urls', // Atributo que contém a lista de URLs
+        batchSize: 5,               // Quantidade de requisições simultâneas
+        delayBetweenBatches: 500,   // Atraso entre lotes (ms)
+        fetchOptions: {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-cache'
+        }
+    };
+
+
+    function createProgressUI() {
+        // Remove interface antiga se existir
+        const existingUI = document.getElementById('auto-fetch-progress');
+        if (existingUI) existingUI.remove();
+
+        const container = document.createElement('div');
+        container.id = 'auto-fetch-progress';
+        Object.assign(container.style, {
+            position: 'fixed',
+            bottom: '20px',
+            right: '20px',
+            width: '320px',
+            padding: '15px',
+            backgroundColor: '#1e1e1e',
+            color: '#ffffff',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '14px',
+            zIndex: '9999',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            transition: 'opacity 0.3s ease'
+        });
+
+        const title = document.createElement('div');
+        title.textContent = 'Processando URLs...';
+        title.style.fontWeight = 'bold';
+
+        const statusText = document.createElement('div');
+        statusText.textContent = 'Iniciando...';
+        statusText.style.fontSize = '12px';
+        statusText.style.color = '#aaa';
+
+        const progressBarBg = document.createElement('div');
+        Object.assign(progressBarBg.style, {
+            width: '100%',
+            height: '8px',
+            backgroundColor: '#333',
+            borderRadius: '4px',
+            overflow: 'hidden'
+        });
+
+        const progressBarFill = document.createElement('div');
+        Object.assign(progressBarFill.style, {
+            width: '0%',
+            height: '100%',
+            backgroundColor: '#4CAF50',
+            transition: 'width 0.3s ease'
+        });
+
+        progressBarBg.appendChild(progressBarFill);
+        container.appendChild(title);
+        container.appendChild(statusText);
+        container.appendChild(progressBarBg);
+        document.body.appendChild(container);
+
+        return {
+            update: (current, total, successCount, errorCount) => {
+                const percent = Math.round((current / total) * 100);
+                progressBarFill.style.width = `${percent}%`;
+                statusText.textContent = `${current}/${total} (${percent}%) | Sucessos: ${successCount} | Erros: ${errorCount}`;
+            },
+            complete: (successCount, errorCount) => {
+                title.textContent = 'Concluído!';
+                title.style.color = '#4CAF50';
+                statusText.textContent = `Total: ${successCount + errorCount} | Sucessos: ${successCount} | Erros: ${errorCount}`;
+                progressBarFill.style.backgroundColor = '#4CAF50';
+                
+       
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = 'Fechar';
+                Object.assign(closeBtn.style, {
+                    marginTop: '5px',
+                    padding: '5px 10px',
+                    cursor: 'pointer',
+                    backgroundColor: '#333',
+                    color: '#fff',
+                    border: '1px solid #555',
+                    borderRadius: '4px'
+                });
+                closeBtn.onclick = () => container.remove();
+                container.appendChild(closeBtn);
+            },
+            error: (message) => {
+                title.textContent = 'Erro!';
+                title.style.color = '#f44336';
+                statusText.textContent = message;
+                progressBarFill.style.backgroundColor = '#f44336';
+            }
+        };
+    }
+    async function fetchUrl(url) {
+        try {
+            const response = await fetch(url, CONFIG.fetchOptions);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return { url, status: 'success' };
+        } catch (error) {
+            console.error(`[Falha] ${url}:`, error.message);
+            return { url, status: 'error', error: error.message };
+        }
+    }
+
+    async function processBatch(batch, ui, currentTotal, totalUrls, successCount, errorCount) {
+        // Usa Promise.allSettled para que uma falha não quebre o lote inteiro
+        const results = await Promise.allSettled(batch.map(url => fetchUrl(url)));
+        
+        let batchSuccess = 0;
+        let batchError = 0;
+
+        results.forEach(result => {
+            if (result.status === 'fulfilled') {
+                if (result.value.status === 'success') {
+                    batchSuccess++;
+                } else {
+                    batchError++;
+                }
+            } else {
+                batchError++; // Falha na própria Promise
+            }
+        });
+
+        return { batchSuccess, batchError };
+    }
+
+
+    try {
+        const targetElement = document.getElementById(CONFIG.targetElementId);
+        
+        if (!targetElement) {
+            console.error(`Elemento com ID "${CONFIG.targetElementId}" não encontrado.`);
+            return;
+        }
+
+        const rawAttribute = targetElement.getAttribute(CONFIG.attributeName);
+        
+        if (!rawAttribute || rawAttribute.trim() === '') {
+            console.warn(`Atributo "${CONFIG.attributeName}" está vazio ou não existe.`);
+            return;
+        }
+
+      
+        const urls = rawAttribute.split(',')
+            .map(url => url.trim())
+            .filter(url => url.length > 0);
+
+        if (urls.length === 0) {
+            console.warn('Nenhuma URL válida encontrada após a limpeza.');
+            return;
+        }
+
+        console.log(` Iniciando processamento de ${urls.length} URLs...`);
+        const ui = createProgressUI();
+        
+        let successCount = 0;
+        let errorCount = 0;
+
+        // Processamento em lotes
+        for (let i = 0; i < urls.length; i += CONFIG.batchSize) {
+            const batch = urls.slice(i, i + CONFIG.batchSize);
+            
+            const { batchSuccess, batchError } = await processBatch(
+                batch, ui, i, urls.length, successCount, errorCount
+            );
+
+            successCount += batchSuccess;
+            errorCount += batchError;
+
+            // Atualiza a UI
+            const processed = Math.min(i + CONFIG.batchSize, urls.length);
+            ui.update(processed, urls.length, successCount, errorCount);
+
+            // Delay entre lotes para não sobrecarregar o servidor
+            if (processed < urls.length) {
+                await new Promise(resolve => setTimeout(resolve, CONFIG.delayBetweenBatches));
+            }
+        }
+
+        ui.complete(successCount, errorCount);
+        console.log(` Processamento concluído. Sucessos: ${successCount}, Erros: ${errorCount}`);
+
+    } catch (error) {
+        console.error('Erro fatal na execução do script:', error);
+    }
+})();
